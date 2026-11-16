@@ -1,0 +1,74 @@
+name: build
+
+# Actions -> build -> Run workflow -> download artifact .mcpack
+# Hasil: 1 pack berisi 3 subpack:
+#   1. Shadow and Glowing Ore   (juga jadi default root)
+#   2. Glowing Ore Only
+#   3. Shadow Only
+on:
+  workflow_dispatch:
+    inputs:
+      subversion:
+        description: 'Sub-version (eg: 57)'
+        default: '57'
+      platform:
+        description: 'Target platform'
+        default: 'android'
+        type: choice
+        options:
+        - android
+        - ios
+        - windows
+        - multiplatform
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ${{ (inputs.platform == 'windows' || inputs.platform == 'multiplatform') && 'windows-2022' || 'ubuntu-latest' }}
+    env:
+      PLATFORM: ${{ inputs.platform || 'android' }}
+      SUBVERSION: ${{ inputs.subversion || '57' }}
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.14'
+
+    - uses: actions/cache@v6
+      with:
+        key: env-files-${{ (inputs.platform == 'windows' || inputs.platform == 'multiplatform') && 'win' || 'linux' }}-laz
+        path: tool/data
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    - name: Build (Linux)
+      if: ${{ env.PLATFORM == 'android' || env.PLATFORM == 'ios' }}
+      run: |
+        bash build.sh setup
+        bash build.sh pack -p ${{ env.PLATFORM }} -v ${{ env.SUBVERSION }} --no-zip
+
+    - name: Build (Windows)
+      if: ${{ env.PLATFORM == 'windows' || env.PLATFORM == 'multiplatform' }}
+      run: |
+        .\build.bat setup
+        .\build.bat pack -p ${{ env.PLATFORM }} -v ${{ env.SUBVERSION }} --no-zip
+
+    - name: Cek isi pack
+      shell: bash
+      run: |
+        find build/pack-${{ env.PLATFORM }} -type f | sort
+        cat build/pack-${{ env.PLATFORM }}/manifest.json
+
+    - name: Zip jadi .mcpack
+      shell: bash
+      run: |
+        python -c "import shutil; shutil.make_archive('Glowing_Ore_Shadow-${{ env.PLATFORM }}', 'zip', 'build/pack-${{ env.PLATFORM }}')"
+        mv Glowing_Ore_Shadow-${{ env.PLATFORM }}.zip Glowing_Ore_Shadow-${{ env.PLATFORM }}.mcpack
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: Glowing_Ore_Shadow-${{ env.PLATFORM }}
+        path: Glowing_Ore_Shadow-${{ env.PLATFORM }}.mcpack
