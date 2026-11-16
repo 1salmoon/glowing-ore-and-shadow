@@ -1,10 +1,5 @@
 name: build
 
-# Actions -> build -> Run workflow -> download artifact .mcpack
-# Hasil: 1 pack berisi 3 subpack:
-#   1. Shadow and Glowing Ore   (juga jadi default root)
-#   2. Glowing Ore Only
-#   3. Shadow Only
 on:
   workflow_dispatch:
     inputs:
@@ -20,17 +15,36 @@ on:
         - ios
         - windows
         - multiplatform
-  push:
-    tags: ['v*']
 
 jobs:
   build:
     runs-on: ${{ (inputs.platform == 'windows' || inputs.platform == 'multiplatform') && 'windows-2022' || 'ubuntu-latest' }}
-    env:
-      PLATFORM: ${{ inputs.platform || 'android' }}
-      SUBVERSION: ${{ inputs.subversion || '57' }}
     steps:
     - uses: actions/checkout@v7
+
+    - name: Ekstrak zip (jika repo hanya berisi zip)
+      shell: bash
+      run: |
+        if ! find . -name build.sh -not -path "./.git/*" | grep -q .; then
+          for f in $(find . -maxdepth 2 -name "*.zip" -not -path "./.git/*"); do
+            if unzip -l "$f" | grep -q "build.sh"; then
+              mkdir -p _src && unzip -q "$f" -d _src
+              break
+            fi
+          done
+        fi
+
+    - name: Cari folder proyek
+      shell: bash
+      run: |
+        dir=$(find . -name requirements.txt -not -path "./.git/*" | while read -r f; do d=$(dirname "$f"); [ -f "$d/build.sh" ] && echo "$d" && break; done)
+        if [ -z "$dir" ]; then
+          echo "::error::requirements.txt + build.sh tidak ditemukan. Isi repo:"
+          find . -not -path "./.git/*" | head -50
+          exit 1
+        fi
+        echo "PROJECT_DIR=$dir" >> "$GITHUB_ENV"
+        echo "Folder proyek: $dir"
 
     - uses: actions/setup-python@v7
       with:
@@ -39,36 +53,41 @@ jobs:
     - uses: actions/cache@v6
       with:
         key: env-files-${{ (inputs.platform == 'windows' || inputs.platform == 'multiplatform') && 'win' || 'linux' }}-laz
-        path: tool/data
+        path: ${{ env.PROJECT_DIR }}/tool/data
 
     - name: Install dependencies
+      working-directory: ${{ env.PROJECT_DIR }}
       run: pip install -r requirements.txt
 
     - name: Build (Linux)
-      if: ${{ env.PLATFORM == 'android' || env.PLATFORM == 'ios' }}
+      if: ${{ inputs.platform == 'android' || inputs.platform == 'ios' }}
+      working-directory: ${{ env.PROJECT_DIR }}
       run: |
         bash build.sh setup
-        bash build.sh pack -p ${{ env.PLATFORM }} -v ${{ env.SUBVERSION }} --no-zip
+        bash build.sh pack -p ${{ inputs.platform }} -v ${{ inputs.subversion }} --no-zip
 
     - name: Build (Windows)
-      if: ${{ env.PLATFORM == 'windows' || env.PLATFORM == 'multiplatform' }}
+      if: ${{ inputs.platform == 'windows' || inputs.platform == 'multiplatform' }}
+      working-directory: ${{ env.PROJECT_DIR }}
       run: |
         .\build.bat setup
-        .\build.bat pack -p ${{ env.PLATFORM }} -v ${{ env.SUBVERSION }} --no-zip
+        .\build.bat pack -p ${{ inputs.platform }} -v ${{ inputs.subversion }} --no-zip
 
     - name: Cek isi pack
       shell: bash
+      working-directory: ${{ env.PROJECT_DIR }}
       run: |
-        find build/pack-${{ env.PLATFORM }} -type f | sort
-        cat build/pack-${{ env.PLATFORM }}/manifest.json
+        find build/pack-${{ inputs.platform }} -type f | sort
+        cat build/pack-${{ inputs.platform }}/manifest.json
 
     - name: Zip jadi .mcpack
       shell: bash
+      working-directory: ${{ env.PROJECT_DIR }}
       run: |
-        python -c "import shutil; shutil.make_archive('Glowing_Ore_Shadow-${{ env.PLATFORM }}', 'zip', 'build/pack-${{ env.PLATFORM }}')"
-        mv Glowing_Ore_Shadow-${{ env.PLATFORM }}.zip Glowing_Ore_Shadow-${{ env.PLATFORM }}.mcpack
+        python -c "import shutil; shutil.make_archive('Glowing_Ore_Shadow-${{ inputs.platform }}', 'zip', 'build/pack-${{ inputs.platform }}')"
+        mv Glowing_Ore_Shadow-${{ inputs.platform }}.zip Glowing_Ore_Shadow-${{ inputs.platform }}.mcpack
 
     - uses: actions/upload-artifact@v4
       with:
-        name: Glowing_Ore_Shadow-${{ env.PLATFORM }}
-        path: Glowing_Ore_Shadow-${{ env.PLATFORM }}.mcpack
+        name: Glowing_Ore_Shadow-${{ inputs.platform }}
+        path: ${{ env.PROJECT_DIR }}/Glowing_Ore_Shadow-${{ inputs.platform }}.mcpack
